@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Workflowy Viewer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #fafafa;
+            color: #1a1a1a;
+        }
+        
+        .node-content {
+            transition: background-color 0.15s ease;
+        }
+        
+        .node-content:hover {
+            background-color: #f5f5f5;
+        }
+        
+        .bullet {
+            transition: transform 0.15s ease;
+            cursor: pointer;
+            user-select: none;
+        }
+        
+        .bullet.expanded {
+            transform: rotate(90deg);
+        }
+        
+        .children {
+            display: none;
+        }
+        
+        .children.show {
+            display: block;
+        }
+        
+        /* Preserve line breaks and formatting */
+        .node-text {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        
+        .node-text a {
+            color: #2563eb;
+            text-decoration: none;
+            border-bottom: 1px solid transparent;
+            transition: border-color 0.15s;
+        }
+        
+        .node-text a:hover {
+            border-bottom-color: #2563eb;
+        }
+        
+        .node-text strong, .node-text b {
+            font-weight: 600;
+        }
+        
+        .node-text em, .node-text i {
+            font-style: italic;
+        }
+        
+        .node-text code {
+            background: #f1f5f9;
+            padding: 1px 4px;
+            border-radius: 2px;
+            font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+
+        .highlight {
+            background: #fef08a;
+            padding: 1px 2px;
+        }
+
+        .search-match {
+            background: #dbeafe;
+            border-left: 2px solid #3b82f6;
+        }
+
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid #e2e8f0;
+            border-top-color: #3b82f6;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        input:focus {
+            outline: none;
+        }
+
+        .header {
+            border-bottom: 1px solid #e5e7eb;
+            background: #ffffff;
+        }
+
+        .upload-zone {
+            border: 2px dashed #d1d5db;
+            transition: all 0.2s;
+        }
+
+        .upload-zone:hover {
+            border-color: #3b82f6;
+            background: #f9fafb;
+        }
+
+        .upload-zone.drag-over {
+            border-color: #3b82f6;
+            background: #eff6ff;
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header sticky top-0 z-50">
+        <div class="max-w-full px-6 py-3">
+            <div class="flex items-center justify-between gap-4 mb-3">
+                <div class="flex items-center gap-3">
+                    <svg class="w-5 h-5 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                    </svg>
+                    <h1 class="text-base font-semibold text-gray-900">Workflowy Viewer</h1>
+                    <span id="itemCount" class="text-xs text-gray-500"></span>
+                </div>
+                
+                <div class="flex items-center gap-2">
+                    <button onclick="expandAll()" class="px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-100 rounded transition">
+                        Expand All
+                    </button>
+                    <button onclick="collapseAll()" class="px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-100 rounded transition">
+                        Collapse All
+                    </button>
+                    <button onclick="document.getElementById('fileInput').click()" class="px-3 py-1.5 text-xs bg-blue-600 text-white hover:bg-blue-700 rounded transition">
+                        Load File
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Search -->
+            <div class="relative" id="searchContainer" style="display: none;">
+                <input 
+                    type="text" 
+                    id="searchInput" 
+                    placeholder="Search..." 
+                    class="w-full px-3 py-2 text-sm border border-gray-300 rounded focus:border-blue-500 transition"
+                >
+                <span id="searchCount" class="absolute right-3 top-2.5 text-xs text-gray-500"></span>
+            </div>
+        </div>
+    </header>
+
+    <input type="file" id="fileInput" accept=".html" class="hidden" onchange="loadFile(event)">
+
+    <!-- Upload Area -->
+    <div id="uploadArea" class="max-w-2xl mx-auto mt-20 px-6">
+        <div class="upload-zone bg-white rounded p-12 text-center cursor-pointer"
+             onclick="document.getElementById('fileInput').click()"
+             ondrop="handleDrop(event)"
+             ondragover="handleDragOver(event)"
+             ondragleave="handleDragLeave(event)">
+            <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+            </svg>
+            <h3 class="mt-4 text-sm font-medium text-gray-900">Drop HTML file here or click to browse</h3>
+            <p class="mt-1 text-xs text-gray-500">Supports large files with thousands of items</p>
+        </div>
+    </div>
+
+    <!-- Content Area -->
+    <div id="contentArea" class="hidden">
+        <div class="max-w-full px-6 py-6">
+            <div class="bg-white rounded shadow-sm">
+                <div id="loadingIndicator" class="p-8 text-center">
+                    <div class="loading mx-auto"></div>
+                    <p class="mt-2 text-xs text-gray-500">Loading...</p>
+                </div>
+                <div id="treeView" class="p-6" style="display: none;"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let allNodes = [];
+        let nodeData = [];
+        let nodeCount = 0;
+        let searchTimeout = null;
+
+        function loadFile(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            showLoading();
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                // Use setTimeout to prevent UI blocking
+                setTimeout(() => processHTML(e.target.result), 100);
+            };
+            reader.readAsText(file);
+        }
+
+        function handleDrop(event) {
+            event.preventDefault();
+            event.currentTarget.classList.remove('drag-over');
+            
+            const file = event.dataTransfer.files[0];
+            if (file && (file.type === 'text/html' || file.name.endsWith('.html'))) {
+                showLoading();
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    setTimeout(() => processHTML(e.target.result), 100);
+                };
+                reader.readAsText(file);
+            }
+        }
+
+        function handleDragOver(event) {
+            event.preventDefault();
+            event.currentTarget.classList.add('drag-over');
+        }
+
+        function handleDragLeave(event) {
+            event.currentTarget.classList.remove('drag-over');
+        }
+
+        function showLoading() {
+            document.getElementById('uploadArea').classList.add('hidden');
+            document.getElementById('contentArea').classList.remove('hidden');
+            document.getElementById('searchContainer').style.display = 'block';
+            document.getElementById('loadingIndicator').style.display = 'block';
+            document.getElementById('treeView').style.display = 'none';
+        }
+
+        function processHTML(htmlContent) {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(htmlContent, 'text/html');
+            
+            let mainList = doc.querySelector('ul') || doc.querySelector('ol') || 
+                          doc.body.querySelector('ul') || doc.body.querySelector('ol');
+            
+            if (!mainList) {
+                alert('No list structure found in the HTML file.');
+                resetView();
+                return;
+            }
+
+            nodeCount = 0;
+            allNodes = [];
+            nodeData = [];
+            
+            const treeView = document.getElementById('treeView');
+            treeView.innerHTML = '';
+            
+            // Process in chunks to prevent hanging
+            processNodeChunked(mainList, treeView, 0, () => {
+                document.getElementById('loadingIndicator').style.display = 'none';
+                document.getElementById('treeView').style.display = 'block';
+                updateItemCount();
+            });
+        }
+
+        function processNodeChunked(element, container, level, callback) {
+            const children = Array.from(element.children);
+            let index = 0;
+            
+            function processChunk() {
+                const chunkSize = 50; // Process 50 items at a time
+                const end = Math.min(index + chunkSize, children.length);
+                
+                for (let i = index; i < end; i++) {
+                    const child = children[i];
+                    if (child.tagName === 'LI') {
+                        nodeCount++;
+                        const nodeDiv = createNodeElement(child, level);
+                        container.appendChild(nodeDiv);
+                        allNodes.push(nodeDiv);
+                        
+                        const nestedList = child.querySelector('ul, ol');
+                        if (nestedList) {
+                            const childContainer = document.createElement('div');
+                            childContainer.className = 'children';
+                            nodeDiv.appendChild(childContainer);
+                            // Process nested items synchronously but in smaller chunks
+                            processNestedNode(nestedList, childContainer, level + 1);
+                        }
+                    }
+                }
+                
+                index = end;
+                
+                if (index < children.length) {
+                    setTimeout(processChunk, 0); // Continue processing
+                } else if (callback) {
+                    callback();
+                }
+            }
+            
+            processChunk();
+        }
+
+        function processNestedNode(element, container, level) {
+            const children = Array.from(element.children);
+            
+            children.forEach(child => {
+                if (child.tagName === 'LI') {
+                    nodeCount++;
+                    const nodeDiv = createNodeElement(child, level);
+                    container.appendChild(nodeDiv);
+                    allNodes.push(nodeDiv);
+                    
+                    const nestedList = child.querySelector('ul, ol');
+                    if (nestedList) {
+                        const childContainer = document.createElement('div');
+                        childContainer.className = 'children';
+                        nodeDiv.appendChild(childContainer);
+                        processNestedNode(nestedList, childContainer, level + 1);
+                    }
+                }
+            });
+        }
+
+        function createNodeElement(liElement, level) {
+            const nodeDiv = document.createElement('div');
+            nodeDiv.className = 'node';
+            
+            const clonedLi = liElement.cloneNode(true);
+            const nestedLists = clonedLi.querySelectorAll('ul, ol');
+            nestedLists.forEach(list => list.remove());
+            
+            // Get HTML and preserve line breaks
+            let htmlContent = clonedLi.innerHTML.trim();
+            
+            // Convert <br> tags to actual line breaks
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = htmlContent;
+            
+            // Get text content preserving structure
+            let textContent = tempDiv.textContent || tempDiv.innerText || '';
+            textContent = textContent.trim();
+            
+            const hasChildren = liElement.querySelector('ul, ol') !== null;
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'node-content flex items-start gap-2 py-1.5 px-2 rounded cursor-pointer';
+            contentDiv.style.paddingLeft = `${level * 1.5 + 0.5}rem`;
+            
+            const bullet = document.createElement('span');
+            bullet.className = `bullet flex-shrink-0 text-gray-400 text-xs`;
+            bullet.innerHTML = hasChildren ? '▸' : '•';
+            bullet.style.width = '12px';
+            bullet.style.marginTop = '2px';
+            
+            const textSpan = document.createElement('span');
+            textSpan.className = 'node-text flex-1 text-sm text-gray-800 leading-relaxed';
+            textSpan.innerHTML = htmlContent || '<span class="text-gray-400">Empty</span>';
+            
+            contentDiv.appendChild(bullet);
+            contentDiv.appendChild(textSpan);
+            nodeDiv.appendChild(contentDiv);
+            
+            if (hasChildren) {
+                contentDiv.onclick = function(e) {
+                    e.stopPropagation();
+                    toggleNode(nodeDiv);
+                };
+            }
+            
+            // Store data efficiently
+            const dataObj = {
+                text: textContent.toLowerCase(),
+                html: htmlContent,
+                node: nodeDiv,
+                textSpan: textSpan
+            };
+            nodeData.push(dataObj);
+            nodeDiv._dataIndex = nodeData.length - 1;
+            
+            return nodeDiv;
+        }
+
+        function toggleNode(nodeDiv) {
+            const bullet = nodeDiv.querySelector('.bullet');
+            const children = nodeDiv.querySelector('.children');
+            
+            if (!children) return;
+            
+            if (children.classList.contains('show')) {
+                children.classList.remove('show');
+                bullet.classList.remove('expanded');
+                bullet.innerHTML = '▸';
+            } else {
+                children.classList.add('show');
+                bullet.classList.add('expanded');
+                bullet.innerHTML = '▾';
+            }
+        }
+
+        function expandAll() {
+            document.querySelectorAll('.children').forEach(child => {
+                child.classList.add('show');
+            });
+            document.querySelectorAll('.bullet').forEach(bullet => {
+                if (bullet.textContent === '▸') {
+                    bullet.classList.add('expanded');
+                    bullet.innerHTML = '▾';
+                }
+            });
+        }
+
+        function collapseAll() {
+            document.querySelectorAll('.children').forEach(child => {
+                child.classList.remove('show');
+            });
+            document.querySelectorAll('.bullet').forEach(bullet => {
+                bullet.classList.remove('expanded');
+                if (bullet.textContent === '▾') {
+                    bullet.innerHTML = '▸';
+                }
+            });
+        }
+
+        // Optimized search with debouncing
+        document.getElementById('searchInput').addEventListener('input', function(e) {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => searchNodes(e.target.value), 300);
+        });
+
+        function searchNodes(query) {
+            query = query.trim();
+            
+            if (!query) {
+                // Reset
+                allNodes.forEach(node => {
+                    node.style.display = '';
+                    const contentDiv = node.querySelector('.node-content');
+                    contentDiv.classList.remove('search-match');
+                    
+                    const dataIndex = node._dataIndex;
+                    if (dataIndex !== undefined && nodeData[dataIndex]) {
+                        nodeData[dataIndex].textSpan.innerHTML = nodeData[dataIndex].html;
+                    }
+                });
+                
+                document.getElementById('searchCount').textContent = '';
+                return;
+            }
+            
+            const queryLower = query.toLowerCase();
+            let matchCount = 0;
+            const matches = new Set();
+            
+            // Find matches
+            nodeData.forEach((data, index) => {
+                if (data.text.includes(queryLower)) {
+                    matchCount++;
+                    matches.add(data.node);
+                    
+                    // Highlight
+                    const regex = new RegExp(`(${escapeRegex(query)})`, 'gi');
+                    data.textSpan.innerHTML = data.html.replace(regex, '<span class="highlight">$1</span>');
+                    data.node.querySelector('.node-content').classList.add('search-match');
+                    
+                    // Show parents
+                    let parent = data.node.parentElement;
+                    while (parent) {
+                        if (parent.classList.contains('children')) {
+                            parent.classList.add('show');
+                            const parentNode = parent.parentElement;
+                            if (parentNode) {
+                                matches.add(parentNode);
+                                const bullet = parentNode.querySelector('.bullet');
+                                if (bullet && bullet.textContent === '▸') {
+                                    bullet.classList.add('expanded');
+                                    bullet.innerHTML = '▾';
+                                }
+                            }
+                        }
+                        parent = parent.parentElement;
+                    }
+                } else {
+                    data.textSpan.innerHTML = data.html;
+                    data.node.querySelector('.node-content').classList.remove('search-match');
+                }
+            });
+            
+            // Show/hide nodes
+            allNodes.forEach(node => {
+                node.style.display = matches.has(node) ? '' : 'none';
+            });
+            
+            document.getElementById('searchCount').textContent = 
+                matchCount > 0 ? `${matchCount} match${matchCount !== 1 ? 'es' : ''}` : 'No matches';
+        }
+
+        function escapeRegex(str) {
+            return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }
+
+        function updateItemCount() {
+            document.getElementById('itemCount').textContent = `${nodeCount} items`;
+        }
+
+        function resetView() {
+            document.getElementById('uploadArea').classList.remove('hidden');
+            document.getElementById('contentArea').classList.add('hidden');
+            document.getElementById('searchContainer').style.display = 'none';
+            document.getElementById('searchInput').value = '';
+            allNodes = [];
+            nodeData = [];
+            nodeCount = 0;
+        }
+    </script>
+</body>
+</html>
